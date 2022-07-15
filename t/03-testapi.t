@@ -919,6 +919,47 @@ subtest 'get_var_array and check_var_array' => sub {
     ok !check_var_array('MY_ARRAY', '4'), 'not present entry returns false';
 };
 
+subtest 'send_key_until_needlematch' => sub {
+    my $mock_testapi = Test::MockModule->new('testapi');
+
+    $mock_testapi->redefine(wait_screen_change => sub : prototype(&@) {
+            my ($callback, $timeout) = @_;
+            $callback->() if $callback;
+    });
+    $mock_testapi->redefine(_handle_found_needle => sub { return $_[0] });
+    $mock_testapi->redefine(assert_screen => sub { die 'assert_screen reached' });
+
+    my $mock_tinycv = Test::MockModule->new('tinycv');
+    $mock_tinycv->redefine(from_ppm => sub : prototype($) { return bless({} => __PACKAGE__); });
+
+    # Check immediate needle match
+    $fake_needle_found = 1;
+    send_key_until_needlematch('tag', 'esc');
+    is(scalar @$cmds, 1, 'needle matches immediately, no key sent') || diag explain $cmds;
+    is($cmds->[-1]->{cmd}, 'check_screen');
+    is($cmds->[-1]->{timeout}, 0);
+    $cmds = [];
+
+    # Needle never matches
+    $fake_needle_found = 0;
+    throws_ok(sub { send_key_until_needlematch('tag', 'esc', 2); },
+        qr/assert_screen reached/,
+        'no candidate needle matched tags'
+    );
+
+    my $count_send_key = 0;
+    # Skip the first check_screen
+    shift @$cmds;
+    for my $cmd (@$cmds) {
+        is($cmd->{timeout}, 1, "timeout for other check_screen is nonzero") if $cmd->{cmd} eq 'check_screen';
+        $count_send_key++ if $cmd->{cmd} eq 'backend_send_key';
+    }
+    is($count_send_key, 3, 'needle matches immediately, no key sent') || diag explain $cmds;
+    $cmds = [];
+
+    $fake_needle_found = 1;
+};
+
 like(exception { x11_start_program 'true' }, qr/implement x11_start_program/, 'x11_start_program needs specific implementation');
 
 done_testing;
