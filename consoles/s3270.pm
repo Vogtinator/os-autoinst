@@ -73,23 +73,20 @@ sub send_3270 ($self, $command = '', %arg) {
     return $out;
 }
 
-sub ensure_screen_update ($self) {
-    # # TODO we capture_screenshot here to ensure
-    # # no screen content is lost in the video.  It is
-    # # a hacky work around until this loop is properly
-    # # integrated with the baseclass run_capture_loop
-    $self->{backend}->request_screen_update();
-    usleep(5_000);
-    $self->{backend}->capture_screenshot();
-    $self->send_3270("Clear");
-}
-
 sub _handle_expect_3270_cycle ($self, $result, $start_time, %arg) {
-    my $we_had_new_output = 0;
-
     # grab any pending output
     if ($self->wait_output()) {
+        # # TODO we capture_screenshot here to ensure
+        # # no screen content is lost in the video.  It is
+        # # a hacky work around until this loop is properly
+        # # integrated with the baseclass run_capture_loop
+        $self->{backend}->request_screen_update();
+        usleep(5_000);
+        $self->{backend}->capture_screenshot();
+
         $self->send_3270("Snap");
+        # Content between Snap and Clear will be lost, so make it as quick as possible
+        $self->send_3270("Clear");
         my $r = $self->send_3270("Snap(Ascii)");
         # split it according to the screen sections
         my $co = $r->{command_output};
@@ -102,13 +99,11 @@ sub _handle_expect_3270_cycle ($self, $result, $start_time, %arg) {
 
         if (@output_area > 0) {
             $self->{raw_expect_queue}->enqueue(@output_area);
-            $we_had_new_output = 1;
         }
         say "expect_3270 queue content:\n\t" . join("\n\t", @{$self->{raw_expect_queue}->{queue}});
 
         # if there is MORE..., go and grab it.
         if ($status_line =~ /$arg{buffer_full}/) {
-            $self->ensure_screen_update();
             return 1;
         }
 
@@ -151,17 +146,6 @@ sub _handle_expect_3270_cycle ($self, $result, $start_time, %arg) {
 
     # If we matched the 'output_delim', we are done.
     return 0 if defined $line;
-
-    # The queue is empty. If we got so far and we had some output on the
-    # screen the last time, clear the screen so we don't grab the same
-    # stuff again.
-
-    # TODO The better alternative solution to the same problem
-    # would be to remember lines that were not updated since the
-    # last Snap(Ascii) and to thus avoid duplicate lines.
-
-    # For now we have to live with having a clear screen.
-    $self->ensure_screen_update() if $we_had_new_output;
 
     # wait for new output from the host.
     my $elapsed_time = time() - $start_time;
